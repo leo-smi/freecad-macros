@@ -1,0 +1,83 @@
+# Macro: RemoveDuplicateLinesInSketch.py
+# Remove linhas duplicadas em um Sketch, mantendo apenas a primeira ocorrência
+
+import FreeCAD
+import FreeCADGui
+from PySide import QtGui
+
+def lines_coincident(g1, g2, tol=1e-7):
+    if not (hasattr(g1, 'StartPoint') and hasattr(g2, 'StartPoint')):
+        return False
+    p11, p12 = g1.StartPoint, g1.EndPoint
+    p21, p22 = g2.StartPoint, g2.EndPoint
+
+    def eq(a, b):
+        return (a - b).Length < tol
+
+    return (eq(p11, p21) and eq(p12, p22)) or (eq(p11, p22) and eq(p12, p21))
+
+def remove_duplicate_lines(sketch):
+    doc = sketch.Document
+    doc.openTransaction("Remove duplicate lines")  # Permite desfazer (Ctrl+Z)
+
+    geo = sketch.Geometry
+    to_remove = set()
+    kept = set()
+
+    # Identificar duplicatas
+    for i in range(len(geo)):
+        if i in to_remove or not hasattr(geo[i], 'StartPoint'):
+            continue
+        for j in range(i + 1, len(geo)):
+            if j in to_remove or not hasattr(geo[j], 'StartPoint'):
+                continue
+            if lines_coincident(geo[i], geo[j]):
+                to_remove.add(j)  # Mantém 'i', remove 'j'
+                kept.add(i)
+
+    if not to_remove:
+        doc.commitTransaction()
+        QtGui.QMessageBox.information(None, "OK", "Nenhuma duplicata encontrada.")
+        return
+
+    # Converter para lista ordenada decrescente (remover do fim para início)
+    indices_to_remove = sorted(to_remove, reverse=True)
+
+    # Remover restrições que referenciam os elementos a serem excluídos
+    cons = sketch.Constraints
+    new_cons = []
+    for c in cons:
+        # Restrições usam .First e .Second (índices de geometria)
+        # Índices negativos = eixos externos, positivos = geometria interna
+        keep = True
+        if hasattr(c, 'First') and c.First >= 0 and c.First in to_remove:
+            keep = False
+        if hasattr(c, 'Second') and c.Second >= 0 and c.Second in to_remove:
+            keep = False
+        if keep:
+            new_cons.append(c)
+
+    # Atualizar restrições
+    sketch.Constraints = new_cons
+
+    # Remover geometrias (do fim para o início para não mudar índices)
+    for idx in indices_to_remove:
+        sketch.delGeometry(idx)
+
+    doc.commitTransaction()
+    doc.recompute()
+
+    msg = f"Removidas {len(to_remove)} linhas duplicadas.\nMantidas as originais."
+    print(msg)
+    QtGui.QMessageBox.information(None, "Sucesso", msg)
+
+# Executar na seleção
+sel = FreeCADGui.Selection.getSelection()
+if not sel:
+    QtGui.QMessageBox.warning(None, "Erro", "Selecione um Sketch!")
+else:
+    obj = sel[0]
+    if not hasattr(obj, 'Geometry'):
+        QtGui.QMessageBox.warning(None, "Erro", "O objeto selecionado não é um Sketch!")
+    else:
+        remove_duplicate_lines(obj)

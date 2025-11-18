@@ -1,0 +1,82 @@
+# -*- coding: utf-8 -*-
+"""
+FreeCAD Macro: Merge Nearby Points in Sketch (Coincident Constraint)
+Author: AI Assistant
+Description: Scans all vertices in the active sketch and applies a coincident
+             constraint to pairs of points whose distance is below a threshold.
+"""
+
+import FreeCAD
+import FreeCADGui
+import Sketcher
+from math import sqrt
+
+# Distance threshold (in model units, e.g. mm)
+THRESHOLD = 0.1  # Adjust as needed
+
+def distance(p1, p2):
+    """Calculate the Euclidean distance between two 2D points (tuples or vectors)."""
+    return sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+def merge_nearby_points():
+    # Check if a document is open
+    if not FreeCAD.ActiveDocument:
+        FreeCAD.Console.PrintError("No active document.\n")
+        return
+
+    # Check if an object is selected
+    selection = FreeCADGui.Selection.getSelection()
+    if not selection:
+        FreeCAD.Console.PrintError("No object selected.\n")
+        return
+
+    obj = selection[0]
+
+    # Verify it's a Sketch
+    if not hasattr(obj, "Constraints"):
+        FreeCAD.Console.PrintError("Selected object is not a Sketch.\n")
+        return
+
+    sketch = obj
+    geo_count = sketch.GeometryCount
+    points = []  # List of (geo_index, vertex_index, coordinates)
+
+    # Collect all vertices (endpoints of geometry)
+    for i in range(geo_count):
+        geo = sketch.Geometry[i]
+        if geo:
+            # Check for geometries with points (e.g. lines, arcs, etc.)
+            if hasattr(geo, "StartPoint"):
+                start = (geo.StartPoint.x, geo.StartPoint.y)
+                points.append((i, 1, start))  # vertex 1 = start
+            if hasattr(geo, "EndPoint"):
+                end = (geo.EndPoint.x, geo.EndPoint.y)
+                points.append((i, 2, end))    # vertex 2 = end
+            # If it's a point geometry (Part::GeomPoint)
+            if geo.TypeId == "Part::GeomPoint":
+                pt = (geo.X, geo.Y)
+                points.append((i, 1, pt))     # single vertex
+
+    # Now compare all pairs of points
+    merged = set()
+    for i in range(len(points)):
+        if i in merged:
+            continue
+        g1, v1, p1 = points[i]
+        for j in range(i + 1, len(points)):
+            if j in merged:
+                continue
+            g2, v2, p2 = points[j]
+            if distance(p1, p2) <= THRESHOLD:
+                # Add coincident constraint
+                sketch.addConstraint(Sketcher.Constraint('Coincident', g1, v1, g2, v2))
+                FreeCAD.Console.PrintMessage(f"Coincident constraint added: ({g1}, {v1}) <-> ({g2}, {v2})\n")
+                merged.add(j)  # Avoid reprocessing point j
+                # After applying coincidence, geometry may be updated
+                # (reloading points may be needed, but we keep it simple)
+
+    FreeCAD.ActiveDocument.recompute()
+    FreeCAD.Console.PrintMessage("Macro completed.\n")
+
+# Execute the function
+merge_nearby_points()
